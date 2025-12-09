@@ -1,3 +1,5 @@
+version: '3.8'
+
 services:
   # MongoDB Database
   mongo:
@@ -7,20 +9,33 @@ services:
     ports:
       - "27017:27017"
     environment:
-      MONGO_INITDB_ROOT_USERNAME: admin
-      MONGO_INITDB_ROOT_PASSWORD: admin123
       MONGO_INITDB_DATABASE: grocery-store
     volumes:
-      - mongo-data:/data/db
+      - mongo_data:/data/db
       - ./mongo-init.js:/docker-entrypoint-initdb.d/mongo-init.js:ro
     networks:
       - grocery-network
     healthcheck:
-      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping').ok", "--quiet"]
+      test: echo 'db.runCommand("ping").ok' | mongosh localhost:27017/test --quiet
       interval: 10s
       timeout: 5s
       retries: 5
-      start_period: 10s
+
+  # Mongo Express (MongoDB Admin UI)
+  mongo-express:
+    image: mongo-express:latest
+    container_name: grocery-mongo-express
+    restart: unless-stopped
+    ports:
+      - "8081:8081"
+    environment:
+      ME_CONFIG_MONGODB_URL: mongodb://mongo:27017/
+      ME_CONFIG_BASICAUTH_USERNAME: admin
+      ME_CONFIG_BASICAUTH_PASSWORD: admin123
+    depends_on:
+      - mongo
+    networks:
+      - grocery-network
 
   # Backend API
   backend:
@@ -33,18 +48,16 @@ services:
       - "3000:3000"
     environment:
       PORT: 3000
-      # Local MongoDB connection
-      MONGODB_URI: mongodb://admin:admin123@mongo:27017/grocery-store?authSource=admin
+      MONGODB_URI: mongodb://mongo:27017/grocery-store
       JWT_SECRET: your-secret-key-change-in-production
       NODE_ENV: production
+    depends_on:
+      - mongo
     networks:
       - grocery-network
     volumes:
       - ./backend:/app
       - /app/node_modules
-    depends_on:
-      mongo:
-        condition: service_healthy
 
   # Frontend
   frontend:
@@ -60,12 +73,14 @@ services:
     networks:
       - grocery-network
     environment:
-      - API_BASE_URL=http://backend:3000/api
+      - API_BASE_URL=http://grocery-backend:3000/api
 
-volumes:
-  mongo-data:
-    driver: local
 
 networks:
   grocery-network:
     driver: bridge
+
+volumes:
+  mongo_data:
+    driver: local
+
