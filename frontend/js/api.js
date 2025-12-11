@@ -1,6 +1,5 @@
 // API Configuration
-const API_BASE_URL = 'http://13.62.84.187:3000/api';
-
+const API_BASE_URL = `http://${window.location.hostname}:3000/api`;
 // Helper function to get auth token
 function getAuthToken() {
     return localStorage.getItem('token');
