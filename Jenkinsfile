@@ -2,11 +2,10 @@ pipeline {
     agent any
     
     environment {
-        DOCKER_REGISTRY = 'your-registry.com'
+        DOCKER_REGISTRY = 'docker.io'  // Change to your registry (docker.io, harbor, etc.)
+        DOCKER_USERNAME = credentials('kumaresan05')  // Docker registry username
         DOCKER_IMAGE_PREFIX = 'grocery-store'
         KUBERNETES_NAMESPACE = 'grocery-store'
-        AWS_REGION = 'us-east-1'
-        AWS_EKS_CLUSTER = 'grocery-store-cluster'
     }
     
     stages {
@@ -90,9 +89,10 @@ pipeline {
         stage('Run Tests') {
             steps {
                 script {
-                    echo 'Running application tests'
-                    // Add your test commands here
-                    sh 'echo "Tests would run here"'
+                    echo 'Running backend tests'
+                    dir('backend') {
+                        sh 'npm test'
+                    }
                 }
             }
         }
@@ -109,11 +109,15 @@ pipeline {
                     echo 'Pushing Docker images to registry'
                     withCredentials([usernamePassword(credentialsId: 'docker-registry-credentials', usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
                         sh """
-                            docker login -u ${DOCKER_USER} -p ${DOCKER_PASS} ${DOCKER_REGISTRY}
-                            docker push ${DOCKER_IMAGE_PREFIX}-backend:${BUILD_NUMBER}
-                            docker push ${DOCKER_IMAGE_PREFIX}-backend:latest
-                            docker push ${DOCKER_IMAGE_PREFIX}-frontend:${BUILD_NUMBER}
-                            docker push ${DOCKER_IMAGE_PREFIX}-frontend:latest
+                            echo ${DOCKER_PASS} | docker login -u ${DOCKER_USER} --password-stdin ${DOCKER_REGISTRY}
+                            docker tag ${DOCKER_IMAGE_PREFIX}-backend:${BUILD_NUMBER} ${DOCKER_REGISTRY}/${DOCKER_USERNAME}/${DOCKER_IMAGE_PREFIX}-backend:${BUILD_NUMBER}
+                            docker tag ${DOCKER_IMAGE_PREFIX}-backend:latest ${DOCKER_REGISTRY}/${DOCKER_USERNAME}/${DOCKER_IMAGE_PREFIX}-backend:latest
+                            docker tag ${DOCKER_IMAGE_PREFIX}-frontend:${BUILD_NUMBER} ${DOCKER_REGISTRY}/${DOCKER_USERNAME}/${DOCKER_IMAGE_PREFIX}-frontend:${BUILD_NUMBER}
+                            docker tag ${DOCKER_IMAGE_PREFIX}-frontend:latest ${DOCKER_REGISTRY}/${DOCKER_USERNAME}/${DOCKER_IMAGE_PREFIX}-frontend:latest
+                            docker push ${DOCKER_REGISTRY}/${DOCKER_USERNAME}/${DOCKER_IMAGE_PREFIX}-backend:${BUILD_NUMBER}
+                            docker push ${DOCKER_REGISTRY}/${DOCKER_USERNAME}/${DOCKER_IMAGE_PREFIX}-backend:latest
+                            docker push ${DOCKER_REGISTRY}/${DOCKER_USERNAME}/${DOCKER_IMAGE_PREFIX}-frontend:${BUILD_NUMBER}
+                            docker push ${DOCKER_REGISTRY}/${DOCKER_USERNAME}/${DOCKER_IMAGE_PREFIX}-frontend:latest
                         """
                     }
                 }
@@ -131,19 +135,29 @@ pipeline {
                 script {
                     echo 'Deploying to Kubernetes cluster'
                     sh """
-                        # Configure kubectl for EKS cluster
-                        aws eks update-kubeconfig --name ${AWS_EKS_CLUSTER} --region ${AWS_REGION}
+                        # Verify kubectl is configured (assumes kubeconfig is already set up)
+                        kubectl cluster-info
                         
-                        # Update Kubernetes deployments with new images
-                        kubectl set image deployment/backend-deployment backend=${DOCKER_IMAGE_PREFIX}-backend:${BUILD_NUMBER} -n ${KUBERNETES_NAMESPACE}
-                        kubectl set image deployment/frontend-deployment frontend=${DOCKER_IMAGE_PREFIX}-frontend:${BUILD_NUMBER} -n ${KUBERNETES_NAMESPACE}
+                        # Create namespace if not exists
+                        kubectl create namespace ${KUBERNETES_NAMESPACE} --dry-run=client -o yaml | kubectl apply -f -
                         
-                        # Apply Kubernetes manifests
-                        kubectl apply -f k8s/ -n ${KUBERNETES_NAMESPACE}
+                        # Apply all Kubernetes manifests
+                        kubectl apply -f k8s/namespace.yaml
+                        kubectl apply -f k8s/mongo-deployment.yaml -n ${KUBERNETES_NAMESPACE}
+                        kubectl apply -f k8s/backend-deployment.yaml -n ${KUBERNETES_NAMESPACE}
+                        kubectl apply -f k8s/frontend-deployment.yaml -n ${KUBERNETES_NAMESPACE}
+                        kubectl apply -f k8s/mongo-express-deployment.yaml -n ${KUBERNETES_NAMESPACE}
+                        kubectl apply -f k8s/prometheus-deployment.yaml -n ${KUBERNETES_NAMESPACE}
+                        kubectl apply -f k8s/grafana-deployment.yaml -n ${KUBERNETES_NAMESPACE}
+                        
+                        # Update images to use latest build
+                        kubectl set image deployment/backend-deployment backend=${DOCKER_REGISTRY}/${DOCKER_USERNAME}/${DOCKER_IMAGE_PREFIX}-backend:${BUILD_NUMBER} -n ${KUBERNETES_NAMESPACE}
+                        kubectl set image deployment/frontend-deployment frontend=${DOCKER_REGISTRY}/${DOCKER_USERNAME}/${DOCKER_IMAGE_PREFIX}-frontend:${BUILD_NUMBER} -n ${KUBERNETES_NAMESPACE}
                         
                         # Wait for rollout
-                        kubectl rollout status deployment/backend-deployment -n ${KUBERNETES_NAMESPACE}
-                        kubectl rollout status deployment/frontend-deployment -n ${KUBERNETES_NAMESPACE}
+                        kubectl rollout status deployment/backend-deployment -n ${KUBERNETES_NAMESPACE} --timeout=5m
+                        kubectl rollout status deployment/frontend-deployment -n ${KUBERNETES_NAMESPACE} --timeout=5m
+                        kubectl rollout status deployment/mongo-deployment -n ${KUBERNETES_NAMESPACE} --timeout=5m
                         
                         echo "Deployment completed successfully"
                     """
