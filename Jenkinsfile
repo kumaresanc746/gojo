@@ -3,7 +3,7 @@ pipeline {
 
     environment {
         DOCKER_REGISTRY = 'docker.io'
-        DOCKER_USERNAME = 'kumaresan05'   // ✅ plain string ONLY
+        DOCKER_USERNAME = 'kumaresan05'
         DOCKER_IMAGE_PREFIX = 'grocery-store'
         KUBERNETES_NAMESPACE = 'grocery-store'
     }
@@ -19,7 +19,6 @@ pipeline {
 
         stage('Install Dependencies') {
             parallel {
-
                 stage('Backend Dependencies') {
                     steps {
                         dir('backend') {
@@ -27,7 +26,6 @@ pipeline {
                         }
                     }
                 }
-
                 stage('Frontend Dependencies') {
                     steps {
                         sh 'echo "Frontend is static files – no dependencies"'
@@ -38,7 +36,6 @@ pipeline {
 
         stage('Build Docker Images') {
             parallel {
-
                 stage('Backend Image') {
                     steps {
                         sh """
@@ -47,7 +44,6 @@ pipeline {
                         """
                     }
                 }
-
                 stage('Frontend Image') {
                     steps {
                         sh """
@@ -62,14 +58,12 @@ pipeline {
         stage('Run Tests') {
             steps {
                 dir('backend') {
-                    sh 'npm test || true'   // prevents test crash
+                    sh 'npm test || true'
                 }
             }
         }
 
         stage('Docker Push') {
-            when { branch 'main' }
-
             steps {
                 withCredentials([
                     usernamePassword(
@@ -80,24 +74,21 @@ pipeline {
                 ]) {
                     sh """
                       echo \$DOCKER_PASS | docker login -u \$DOCKER_USER --password-stdin
-                      
-                      docker tag ${DOCKER_IMAGE_PREFIX}-backend:${BUILD_NUMBER} ${DOCKER_USERNAME}/${DOCKER_IMAGE_PREFIX}-backend:${BUILD_NUMBER}
-                      docker tag ${DOCKER_IMAGE_PREFIX}-frontend:${BUILD_NUMBER} ${DOCKER_USERNAME}/${DOCKER_IMAGE_PREFIX}-frontend:${BUILD_NUMBER}
 
-                      docker push ${DOCKER_USERNAME}/${DOCKER_IMAGE_PREFIX}-backend:${BUILD_NUMBER}
-                      docker push ${DOCKER_USERNAME}/${DOCKER_IMAGE_PREFIX}-frontend:${BUILD_NUMBER}
+                      docker tag ${DOCKER_IMAGE_PREFIX}-backend:${BUILD_NUMBER} \$DOCKER_USER/${DOCKER_IMAGE_PREFIX}-backend:${BUILD_NUMBER}
+                      docker tag ${DOCKER_IMAGE_PREFIX}-frontend:${BUILD_NUMBER} \$DOCKER_USER/${DOCKER_IMAGE_PREFIX}-frontend:${BUILD_NUMBER}
+
+                      docker push \$DOCKER_USER/${DOCKER_IMAGE_PREFIX}-backend:${BUILD_NUMBER}
+                      docker push \$DOCKER_USER/${DOCKER_IMAGE_PREFIX}-frontend:${BUILD_NUMBER}
                     """
                 }
             }
         }
 
         stage('Deploy to Kubernetes') {
-            when { branch 'main' }
-
             steps {
                 sh """
                   kubectl create namespace ${KUBERNETES_NAMESPACE} --dry-run=client -o yaml | kubectl apply -f -
-                  
                   kubectl apply -f k8s/ -n ${KUBERNETES_NAMESPACE}
 
                   kubectl set image deployment/backend-deployment backend=${DOCKER_USERNAME}/${DOCKER_IMAGE_PREFIX}-backend:${BUILD_NUMBER} -n ${KUBERNETES_NAMESPACE}
